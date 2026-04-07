@@ -1,0 +1,3 @@
+-- Test fixture migration. Empty body is fine — the wizard only invokes
+-- `wrangler d1 migrations apply` against this directory; it never reads
+-- the SQL itself.

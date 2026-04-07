@@ -1,0 +1,17 @@
+# Test fixture mirroring the real cloakmail web wrangler.toml.template.
+name = "{{WEB_WORKER_NAME}}"
+main = ".svelte-kit/cloudflare/_worker.js"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = ".svelte-kit/cloudflare"
+binding = "ASSETS"
+
+[vars]
+PUBLIC_APP_NAME = "{{APP_NAME}}"
+PUBLIC_EMAIL_DOMAIN = "{{DOMAIN}}"
+
+[[services]]
+binding = "API"
+service = "{{API_WORKER_NAME}}"

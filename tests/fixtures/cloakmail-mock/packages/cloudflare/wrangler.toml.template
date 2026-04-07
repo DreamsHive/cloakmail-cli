@@ -1,0 +1,20 @@
+# Test fixture mirroring the real cloakmail wrangler.toml.template.
+name = "{{API_WORKER_NAME}}"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "{{D1_NAME}}"
+database_id = "{{D1_ID}}"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "{{R2_NAME}}"
+
+[vars]
+DOMAIN = "{{DOMAIN}}"
+EMAIL_TTL_SECONDS = "{{EMAIL_TTL_SECONDS}}"
+MAX_EMAIL_SIZE_MB = "{{MAX_EMAIL_SIZE_MB}}"

@@ -1,34 +1,63 @@
 {
-	"name": "cloakmail-cli",
-	"version": "0.1.0",
-	"description": "An official CloakMail CLI",
-	"type": "module",
-	"bin": {
-		"cloakmail-cli": "./src/index.ts"
-	},
-	"scripts": {
-		"dev": "seed dev",
-		"build": "seed build",
-		"compile": "seed build --compile --outfile cloakmail-cli",
-		"test": "vitest run",
-		"lint": "biome check .",
-		"lint:fix": "biome check --write .",
-		"format": "biome format --write .",
-		"typecheck": "tsc --noEmit"
-	},
-	"engines": {
-		"node": ">=24.0.0"
-	},
-	"dependencies": {
-		"@seedcli/core": "^1.1.1"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "^2.4.4",
-		"@seedcli/cli": "^1.1.1",
-		"@seedcli/testing": "^1.1.1",
-		"@types/node": "^24.0.0",
-		"tsx": "^4.19.0",
-		"vitest": "^3.2.0",
-		"typescript": "^5.9.0"
-	}
+  "name": "cloakmail-cli",
+  "version": "1.0.0",
+  "description": "An official CloakMail CLI",
+  "type": "module",
+  "bin": {
+    "cloakmail-cli": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DreamsHive/cloakmail-cli.git"
+  },
+  "homepage": "https://github.com/DreamsHive/cloakmail-cli#readme",
+  "bugs": {
+    "url": "https://github.com/DreamsHive/cloakmail-cli/issues"
+  },
+  "license": "MIT",
+  "keywords": [
+    "cloakmail",
+    "cli",
+    "cloudflare",
+    "workers",
+    "email",
+    "disposable-email",
+    "temp-mail"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "seed dev",
+    "dev:setup": "bun src/index.ts setup",
+    "build": "seed build",
+    "compile": "seed build --compile --outfile cloakmail-cli",
+    "test": "vitest run",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "dependencies": {
+    "@seedcli/core": "^1.1.4",
+    "wrangler": "^3.114.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.4",
+    "@seedcli/cli": "^1.1.4",
+    "@seedcli/testing": "^1.1.4",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "vitest": "^3.2.0",
+    "typescript": "^5.9.0"
+  }
 }
