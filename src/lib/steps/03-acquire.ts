@@ -9,27 +9,22 @@ import type { SetupSeed } from "./types"
  *  - reuse a cached extraction under ~/.cloakmail-cli/cache/.
  *
  * The extension also runs the `.cli-manifest.json` compat check, so by the
- * time this step succeeds we know the templates and migrations live where
+ * time this function returns we know the templates and migrations live where
  * the next phases expect them to.
+ *
+ * IMPORTANT: this step does NOT create its own spinner. All visual feedback
+ * (lookup / download / extract / success / failure) is owned by the `source`
+ * extension so that only one spinner is ever active at a time. A previous
+ * version of this file wrapped `source.acquire()` in an outer spinner, which
+ * caused ora's "Multiple concurrent spinners detected" warning to fire when
+ * the inner lookup spinner started — we now let the extension handle the
+ * entire visual lifecycle itself.
  */
 export async function run(seed: SetupSeed): Promise<void> {
-  const { print, source, state, flags } = seed
+  const { source, state, flags } = seed
 
-  const spinner = print.spin(
-    flags.from
-      ? `Using local cloakmail checkout at ${flags.from}...`
-      : flags.version
-        ? `Fetching cloakmail ${flags.version}...`
-        : "Resolving + fetching latest cloakmail release...",
-  )
-  try {
-    const acquired = await source.acquire({ from: flags.from, version: flags.version })
-    spinner.succeed(`Acquired cloakmail ${acquired.version} at ${acquired.root}`)
-    // Persist the version we used so the next run can detect upgrades and
-    // future status / upgrade commands have a baseline to compare against.
-    await state.save({ cloakmail_version: acquired.version })
-  } catch (err) {
-    spinner.fail("Source acquisition failed")
-    throw err
-  }
+  const acquired = await source.acquire({ from: flags.from, version: flags.version })
+  // Persist the version we used so the next run can detect upgrades and
+  // future status / upgrade commands have a baseline to compare against.
+  await state.save({ cloakmail_version: acquired.version })
 }

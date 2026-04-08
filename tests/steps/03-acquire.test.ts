@@ -15,6 +15,13 @@ const fakeManifest: CloakmailManifest = {
 }
 
 describe("steps/03-acquire", () => {
+  // NOTE: as of cloakmail-cli 1.0.1, 03-acquire.ts is a thin delegator — it
+  // does NOT create its own spinner. All visual feedback (lookup / download /
+  // extract) is owned by the `source` extension so at most one spinner is
+  // ever active at a time (fixes ora's "Multiple concurrent spinners
+  // detected" warning). These tests intentionally don't assert on spinner
+  // creation at this layer.
+
   test("--from path: delegates to source.acquire and stores resolved version", async () => {
     const harness = buildFakeSeed({
       flags: { from: "/local/cloakmail" },
@@ -34,7 +41,8 @@ describe("steps/03-acquire", () => {
     })
     await acquire(harness.seed)
     expect(harness.state.saves.at(-1)?.cloakmail_version).toBe("v1.0.0-8-gabc1234-dirty")
-    expect(harness.print.spinners[0]?.events.some((e) => e.kind === "succeed")).toBe(true)
+    // 03-acquire.ts owns no spinners — the source extension does.
+    expect(harness.print.spinners).toHaveLength(0)
   })
 
   test("tarball path: passes through --version", async () => {
@@ -67,7 +75,5 @@ describe("steps/03-acquire", () => {
       },
     })
     await expect(acquire(harness.seed)).rejects.toThrow(/min_cli_version mismatch/)
-    // Spinner should have failed (not succeeded).
-    expect(harness.print.spinners[0]?.events.some((e) => e.kind === "fail")).toBe(true)
   })
 })

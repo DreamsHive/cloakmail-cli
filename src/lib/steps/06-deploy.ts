@@ -28,6 +28,7 @@ export async function run(seed: SetupSeed): Promise<void> {
   if (dryRun) {
     const apiPath = filesystem.path.join(source.root, "packages", "cloudflare")
     const webPath = filesystem.path.join(source.root, "packages", "web")
+    print.muted(`[dry-run] would run: bun install (cwd=${apiPath})`)
     print.muted(`[dry-run] would run: wrangler deploy (cwd=${apiPath})`)
     print.muted(`[dry-run]   → API worker '${current.api_worker_name}' published to workers.dev`)
     print.muted(
@@ -42,6 +43,27 @@ export async function run(seed: SetupSeed): Promise<void> {
       `[dry-run]   → web worker '${current.web_worker_name}' published, service binding to API resolves`,
     )
     return
+  }
+
+  // Step 14.5 — install cloudflare package dependencies so wrangler's esbuild
+  // bundler can resolve `hono`, `postal-mime`, etc. when it bundles
+  // `src/worker.ts`. The source tarball we acquired in phase 3 only contains
+  // the committed files, NOT node_modules — so in production (`bunx
+  // cloakmail-cli setup`) there's nothing to import. Dev mode (`--from`) only
+  // worked by accident because the user's local checkout already had deps
+  // installed. This must run BEFORE the API deploy, because the deploy is
+  // what actually invokes the bundler.
+  const cloudflareDir = filesystem.path.join(source.root, "packages", "cloudflare")
+  const cfInstallSpinner = print.spin("Installing cloudflare package dependencies (bun install)...")
+  try {
+    const installResult = await system.exec("bun install", { cwd: cloudflareDir })
+    if (installResult.exitCode !== 0) {
+      throw new Error(installResult.stderr || "bun install exited non-zero")
+    }
+    cfInstallSpinner.succeed("Cloudflare package dependencies installed")
+  } catch (err) {
+    cfInstallSpinner.fail("bun install failed in packages/cloudflare")
+    throw err
   }
 
   // Step 15 — deploy API worker. wrangler picks up the rendered toml from

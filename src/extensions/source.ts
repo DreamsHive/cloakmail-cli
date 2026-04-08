@@ -210,24 +210,42 @@ export default defineExtension({
       },
 
       async acquire(opts: { from?: string; version?: string }): Promise<AcquiredSource> {
+        // SPINNER DISCIPLINE: this function is the sole owner of all visual
+        // feedback for the acquire phase. 03-acquire.ts intentionally does NOT
+        // wrap us in an outer spinner — a previous version did, and it
+        // triggered ora's "Multiple concurrent spinners detected" warning
+        // every time we started the inner lookup spinner below. The rule
+        // going forward: at most one spinner is active at a time, and each
+        // spinner must be .succeed()/.fail()/.warn()'d before the next one
+        // is created.
+
         // Mode 1 — local checkout. Used for cloakmail dev or running a fork.
         // Version comes from `git describe` if possible, manifest fallback
-        // otherwise, "local" as the last resort.
+        // otherwise, "local" as the last resort. Fast enough that a single
+        // spinner covering the whole "read manifest + git describe" dance is
+        // the right granularity.
         if (opts.from) {
-          const absolute = filesystem.path.isAbsolute(opts.from)
-            ? opts.from
-            : filesystem.path.resolve(opts.from)
-          if (!(await filesystem.isDirectory(absolute))) {
-            throw new AcquireError(`--from path is not a directory: ${absolute}`)
+          const fromSpinner = print.spin(`Using local cloakmail checkout at ${opts.from}...`)
+          try {
+            const absolute = filesystem.path.isAbsolute(opts.from)
+              ? opts.from
+              : filesystem.path.resolve(opts.from)
+            if (!(await filesystem.isDirectory(absolute))) {
+              throw new AcquireError(`--from path is not a directory: ${absolute}`)
+            }
+            const manifest = await readManifest(absolute)
+            const gitVersion = await gitDescribe(absolute)
+            const resolvedVersion = gitVersion ?? manifest.cloakmail_version ?? "local"
+            assertCompatible(manifest, resolvedVersion)
+            state.path = absolute
+            state.manifest = manifest
+            state.version = resolvedVersion
+            fromSpinner.succeed(`Using cloakmail ${resolvedVersion} at ${absolute}`)
+            return { root: absolute, manifest, version: resolvedVersion }
+          } catch (err) {
+            fromSpinner.fail("Failed to use local cloakmail checkout")
+            throw err
           }
-          const manifest = await readManifest(absolute)
-          const gitVersion = await gitDescribe(absolute)
-          const resolvedVersion = gitVersion ?? manifest.cloakmail_version ?? "local"
-          assertCompatible(manifest, resolvedVersion)
-          state.path = absolute
-          state.manifest = manifest
-          state.version = resolvedVersion
-          return { root: absolute, manifest, version: resolvedVersion }
         }
 
         // Mode 2 — GitHub tarball. Cached by version under
@@ -242,27 +260,39 @@ export default defineExtension({
           version = opts.version
         } else {
           const lookupSpinner = print.spin("Looking up latest cloakmail release on GitHub...")
-          const latest = await resolveLatestRelease()
-          if (latest) {
-            lookupSpinner.succeed(`Latest release is ${latest}`)
-            version = latest
-          } else {
-            lookupSpinner.warn("No GitHub release found; falling back to main branch")
-            version = "main"
+          try {
+            const latest = await resolveLatestRelease()
+            if (latest) {
+              lookupSpinner.succeed(`Latest release is ${latest}`)
+              version = latest
+            } else {
+              lookupSpinner.warn("No GitHub release found; falling back to main branch")
+              version = "main"
+            }
+          } catch (err) {
+            lookupSpinner.fail("Failed to look up latest cloakmail release")
+            throw err
           }
         }
         const extractedDir = filesystem.path.join(cacheRoot, `cloakmail-${version}`)
 
+        // Cache hit path — still show a (short) spinner so the user sees the
+        // status line for consistency with the miss path. It's cheap even if
+        // the work is nearly instant.
         if (await filesystem.isDirectory(extractedDir)) {
-          // Cached hit. Trust the cache layout — the user can `cloakmail-cli
-          // cache clear` (v2) or delete the directory by hand if they want
-          // to force a re-fetch.
-          const manifest = await readManifest(extractedDir)
-          assertCompatible(manifest, version)
-          state.path = extractedDir
-          state.manifest = manifest
-          state.version = version
-          return { root: extractedDir, manifest, version }
+          const cacheSpinner = print.spin(`Using cached cloakmail ${version}...`)
+          try {
+            const manifest = await readManifest(extractedDir)
+            assertCompatible(manifest, version)
+            state.path = extractedDir
+            state.manifest = manifest
+            state.version = version
+            cacheSpinner.succeed(`Using cached cloakmail ${version} at ${extractedDir}`)
+            return { root: extractedDir, manifest, version }
+          } catch (err) {
+            cacheSpinner.fail(`Failed to load cached cloakmail ${version}`)
+            throw err
+          }
         }
 
         await filesystem.ensureDir(cacheRoot)
@@ -277,9 +307,12 @@ export default defineExtension({
           ? `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/archive/refs/heads/${version}.tar.gz`
           : `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/archive/refs/tags/${version}.tar.gz`
 
+        const downloadSpinner = print.spin(`Downloading cloakmail ${version} from GitHub...`)
         try {
           await http.download(tarballUrl, tarballPath)
+          downloadSpinner.succeed(`Downloaded cloakmail ${version}`)
         } catch (err) {
+          downloadSpinner.fail(`Failed to download cloakmail ${version}`)
           const reason = err instanceof Error ? err.message : String(err)
           throw new AcquireError(
             `Failed to download cloakmail ${version} from ${tarballUrl}: ${reason}. ` +
@@ -293,35 +326,42 @@ export default defineExtension({
         // (branch tarballs use the branch name, tag tarballs use the bare
         // tag without the leading `v`), so we extract into a temp dir and
         // rename the single child to our deterministic cache path.
-        const tmpExtract = await filesystem.tmpDir({ prefix: "cloakmail-extract-" })
-        const execResult = await system.exec(`tar -xzf "${tarballPath}" -C "${tmpExtract}"`)
-        if (execResult.exitCode !== 0) {
-          throw new AcquireError(
-            `Failed to extract cloakmail tarball: ${execResult.stderr || "tar exited with non-zero status"}`,
-            version,
-          )
+        const extractSpinner = print.spin(`Extracting cloakmail ${version}...`)
+        try {
+          const tmpExtract = await filesystem.tmpDir({ prefix: "cloakmail-extract-" })
+          const execResult = await system.exec(`tar -xzf "${tarballPath}" -C "${tmpExtract}"`)
+          if (execResult.exitCode !== 0) {
+            throw new AcquireError(
+              `Failed to extract cloakmail tarball: ${execResult.stderr || "tar exited with non-zero status"}`,
+              version,
+            )
+          }
+
+          const children = await filesystem.list(tmpExtract)
+          const firstChild = children[0]
+          if (!firstChild) {
+            throw new AcquireError(`Extracted cloakmail tarball is empty (${tarballPath})`, version)
+          }
+          const extractedRoot = filesystem.path.join(tmpExtract, firstChild)
+
+          // Move the extracted root into the cache. We use copy + remove rather
+          // than `move` because `move` across filesystems can fail with EXDEV
+          // and the temp dir lives on the system temp partition.
+          await filesystem.copy(extractedRoot, extractedDir, { overwrite: true })
+          await filesystem.remove(tmpExtract)
+          await filesystem.remove(tarballPath)
+
+          const manifest = await readManifest(extractedDir)
+          assertCompatible(manifest, version)
+          state.path = extractedDir
+          state.manifest = manifest
+          state.version = version
+          extractSpinner.succeed(`Acquired cloakmail ${version} at ${extractedDir}`)
+          return { root: extractedDir, manifest, version }
+        } catch (err) {
+          extractSpinner.fail(`Failed to extract cloakmail ${version}`)
+          throw err
         }
-
-        const children = await filesystem.list(tmpExtract)
-        const firstChild = children[0]
-        if (!firstChild) {
-          throw new AcquireError(`Extracted cloakmail tarball is empty (${tarballPath})`, version)
-        }
-        const extractedRoot = filesystem.path.join(tmpExtract, firstChild)
-
-        // Move the extracted root into the cache. We use copy + remove rather
-        // than `move` because `move` across filesystems can fail with EXDEV
-        // and the temp dir lives on the system temp partition.
-        await filesystem.copy(extractedRoot, extractedDir, { overwrite: true })
-        await filesystem.remove(tmpExtract)
-        await filesystem.remove(tarballPath)
-
-        const manifest = await readManifest(extractedDir)
-        assertCompatible(manifest, version)
-        state.path = extractedDir
-        state.manifest = manifest
-        state.version = version
-        return { root: extractedDir, manifest, version }
       },
     }
   },
