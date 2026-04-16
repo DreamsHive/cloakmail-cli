@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import { defineExtension } from "@seedcli/core"
 import { AcquireError } from "../lib/errors"
 
@@ -93,6 +94,86 @@ function compareVersions(a: string, b: string): number {
     if (left < right) return -1
   }
   return 0
+}
+
+/**
+ * Spawn `tar -xzf <archivePath> -C <destDir>` with argv passed directly to
+ * the OS — no shell, no cmd.exe, no quote parsing. Archive and destination
+ * paths are distinct argv entries, so they can contain spaces, backslashes,
+ * or any other filesystem-legal character without tar ever seeing a literal
+ * quote character. This is the fix for issue #5 on Windows, where the
+ * previous `system.exec(\`tar -xzf "${path}" ...\`)` shape routed the
+ * archive path through `cmd /c`'s quote parser and delivered it with
+ * literal `"` chars still attached.
+ *
+ * Exported as a module-level named export so `tests/source.test.ts` can
+ * drive it directly (via a mocked `node:child_process.spawn`) without
+ * standing up the full acquire pipeline.
+ */
+export async function extractTarballToDir(
+  archivePath: string,
+  destDir: string,
+  version: string,
+): Promise<void> {
+  return await new Promise<void>((resolve, reject) => {
+    const child = spawn("tar", ["-xzf", archivePath, "-C", destDir], {
+      stdio: ["ignore", "ignore", "pipe"],
+      windowsHide: true,
+    })
+    let stderr = ""
+    child.stderr?.on("data", (chunk) => {
+      stderr += String(chunk)
+    })
+    child.once("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") {
+        reject(
+          new AcquireError(
+            "Failed to extract cloakmail tarball: tar is required but was not found on PATH. " +
+              "On Windows 10+ tar ships at C:\\Windows\\System32\\tar.exe; " +
+              "on macOS/Linux install it via the system package manager.",
+            version,
+          ),
+        )
+        return
+      }
+      reject(new AcquireError(`Failed to extract cloakmail tarball: ${err.message}`, version))
+    })
+    child.once("close", (code: number | null, signal: NodeJS.Signals | null) => {
+      const tail = stderr.trimEnd() || "no stderr output"
+      if (code === 0) {
+        resolve()
+        return
+      }
+      if (typeof code === "number") {
+        reject(
+          new AcquireError(
+            `Failed to extract cloakmail tarball (tar exit ${code}): ${stderr.trimEnd() || "tar exited with non-zero status"}`,
+            version,
+          ),
+        )
+        return
+      }
+      // code === null — child was terminated before exiting normally.
+      // Differentiate signal vs. no-signal so the user-facing message is
+      // always specific; we never want to emit the nonsense string
+      // `tar exit null`.
+      if (signal != null) {
+        reject(
+          new AcquireError(
+            `Failed to extract cloakmail tarball: tar terminated by signal ${signal}: ${tail}`,
+            version,
+          ),
+        )
+        return
+      }
+      reject(
+        new AcquireError(
+          `Failed to extract cloakmail tarball: tar exited without a status code: ${tail}`,
+          version,
+        ),
+      )
+    })
+  })
 }
 
 export default defineExtension({
@@ -329,13 +410,7 @@ export default defineExtension({
         const extractSpinner = print.spin(`Extracting cloakmail ${version}...`)
         try {
           const tmpExtract = await filesystem.tmpDir({ prefix: "cloakmail-extract-" })
-          const execResult = await system.exec(`tar -xzf "${tarballPath}" -C "${tmpExtract}"`)
-          if (execResult.exitCode !== 0) {
-            throw new AcquireError(
-              `Failed to extract cloakmail tarball: ${execResult.stderr || "tar exited with non-zero status"}`,
-              version,
-            )
-          }
+          await extractTarballToDir(tarballPath, tmpExtract, version)
 
           const children = await filesystem.list(tmpExtract)
           const firstChild = children[0]
