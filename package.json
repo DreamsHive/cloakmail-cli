@@ -1,6 +1,6 @@
 {
   "name": "cloakmail-cli",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "An official CloakMail CLI",
   "type": "module",
   "bin": {
